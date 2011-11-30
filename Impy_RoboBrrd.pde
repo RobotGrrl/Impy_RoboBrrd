@@ -7,28 +7,39 @@
  
  Examples of how you can program your RoboBrrd!
  
- CC BY-SA
+ Licensed under the BSD 3-Clause license:
+ http://www.opensource.org/licenses/BSD-3-Clause
+ (see bottom for longer disclaimer)
+ 
  */
 
 #include <Servo.h> 
 #include <Streaming.h>
+#include <PN532.h>
+
+#define SCK 13
+#define MOSI 11
+#define SS 10
+#define MISO 12
+
+PN532 nfc(SCK, MISO, MOSI, SS);
 
 Servo beakServo, rwingServo, lwingServo, rotationServo;
 
 // Servos
-int BEAK = 13;
-int RWING = 12;
-int LWING = 8;
-int ROTATION = 7;
+int BEAK = 9;
+int RWING = 8;
+int LWING = 7;
+int ROTATION = 6;
 int HULA = 4;
 
 // LEDs
-int RED = 9;
-int GREEN = 10;
-int BLUE = 11;
+int RED = A5;
+int GREEN = A4;
+int BLUE = A3;
 
 // Misc
-int SPKR = 6;
+int SPKR = 5;
 int LDR_R = A0;
 int LDR_L = A1;
 
@@ -77,10 +88,37 @@ int thresh = 30;
 boolean chase = false;
 boolean photovore = false;
 
+int hat = 0;
+int step = 0;
+
+int ldrL_home;
+int ldrR_home;
+int ldr_thresh = 30;
+
+unsigned long photovorePlay = 10000;
+unsigned long photovoreTimeStarted = 0;
 
 void setup()  {
     
     Serial.begin(9600);
+    
+    Serial.println("Hello!");
+    
+    nfc.begin();
+    
+    uint32_t versiondata = nfc.getFirmwareVersion();
+    if (! versiondata) {
+        Serial.print("Didn't find PN53x board");
+        while (1); // halt
+    }
+    // Got ok data, print it out!
+    Serial.print("Found chip PN5"); Serial.println((versiondata>>24) & 0xFF, HEX); 
+    Serial.print("Firmware ver. "); Serial.print((versiondata>>16) & 0xFF, DEC); 
+    Serial.print('.'); Serial.println((versiondata>>8) & 0xFF, DEC);
+    Serial.print("Supports "); Serial.println(versiondata & 0xFF, HEX);
+    
+    // configure board to read RFID tags and cards
+    nfc.SAMConfig();
     
     // Attach all the servos
     beakServo.attach(BEAK);
@@ -106,6 +144,9 @@ void setup()  {
     pinMode(BLUE, OUTPUT);
     pinMode(GREEN, OUTPUT);
     
+    // Evaluate LDRs
+    evaluateLDRs();
+    
     // Random chirp!
     randomChirp();
     
@@ -114,20 +155,387 @@ void setup()  {
 
 void loop() { 
     
-    for(int i=0; i<5; i++) {
-    digitalWrite(HULA, HIGH);
-    delay(5);
-    digitalWrite(HULA, LOW);
-    delay(100);
+    checkNFC();
+    
+    switch (hat) {
+        case 0:
+            eyesWhite();
+            break;
+        case 1: // top hat
+            
+            photovore = true;
+            photovoreCheck();
+            
+            switch (step) {
+                case 0:
+                    for(int i=0; i<3; i++) {
+                        eyesWhite();
+                        delay(100);
+                        eyesBlue();
+                        delay(100);
+                    }
+                    break;
+                case 1:
+                    beakServo.write(BEAK_OPEN);
+                    for(int i=0; i<5; i++) {
+                        playTone(260, 70);
+                        playTone(280, 70);
+                        playTone(300, 70);
+                        delay(100);
+                    }
+                    beakServo.write(BEAK_CLOSED);
+                    delay(300);
+                    break;
+                case 2:
+                    rwingWave();
+                    break;
+                case 3:
+                    beakServo.write(BEAK_OPEN);
+                    for(int i=0; i<5; i++) {
+                        playTone(80, 70);
+                        playTone(100, 70);
+                        playTone(120, 70);
+                        delay(100);
+                    }
+                    beakServo.write(BEAK_CLOSED);
+                    delay(300);
+                    break;
+                case 4:
+                    lwingWave();
+                    break;
+                case 5:
+                    beakServo.write(BEAK_OPEN);
+                    for(int i=0; i<5; i++) {
+                        playTone(160, 70);
+                        playTone(180, 70);
+                        playTone(200, 70);
+                        delay(100);
+                    }
+                    beakServo.write(BEAK_CLOSED);
+                    delay(300);
+                    break;
+                default:
+                    break;
+            }
+            
+            step++;
+            if(step > 5) step = 0; 
+            
+            break;
+        case 2: // red maker hat
+            
+            photovore = false;
+            photovoreCheck();
+            
+            switch (step) {
+                case 0:
+                    for(int i=0; i<3; i++) {
+                        eyesWhite();
+                        delay(100);
+                        eyesRed();
+                        delay(100);
+                    }
+                    break;
+                case 1:
+                    wingsExcited();
+                    break;
+                case 2:
+                    for(int i=0; i<3; i++) {
+                        beakServo.write(BEAK_OPEN);
+                        delay(300);
+                        beakServo.write(BEAK_CLOSED);
+                        delay(300);
+                    }
+                    break;
+                case 3:
+                    beakServo.write(BEAK_OPEN);
+                    for(int i=0; i<5; i++) {
+                        playTone(200, 70);
+                        playTone(300, 140);
+                        playTone(100, 70);
+                        delay(100);
+                    }
+                    beakServo.write(BEAK_CLOSED);
+                    delay(300);
+                    break;
+                case 4:
+                    for(int i=0; i<2; i++) {
+                        rotationServo.write(MIDDLE+10);
+                        delay(200);
+                        rotationServo.write(MIDDLE-10); 
+                        delay(200);
+                    }
+                    
+                    rotationServo.write(MIDDLE);
+                    break;
+                case 5:
+                    rwingWave();
+                    break;
+                default:
+                    break;
+            }
+            
+            step++;
+            if(step > 5) step = 0;
+            
+            break;
+        case 3: // purple robot hat
+            
+            photovore = true;
+            photovoreCheck();
+            
+            switch (step) {
+                case 0:
+                    for(int i=0; i<3; i++) {
+                        eyesWhite();
+                        delay(100);
+                        eyesPurple();
+                        delay(100);
+                    }
+                    break;
+                case 1:
+                    beakServo.write(BEAK_OPEN);
+                    for(int i=0; i<5; i++) {
+                        playTone(150, 100);
+                        playTone(100, 70);
+                        playTone(200, 80);
+                        playTone(300, 70);
+                        delay(100);
+                    }
+                    beakServo.write(BEAK_CLOSED);
+                    delay(300);
+                    break;
+                case 2:
+                    wingsExcited();
+                    break;
+                case 3:
+                    for(int i=0; i<2; i++) {
+                        rotationServo.write(MIDDLE+40);
+                        delay(300);
+                        rotationServo.write(MIDDLE-40); 
+                        delay(300);
+                    }
+                    
+                    rotationServo.write(MIDDLE);
+                    break;
+                case 4:
+                    for(int i=0; i<5; i++) {
+                        digitalWrite(HULA, HIGH);
+                        delay(5);
+                        digitalWrite(HULA, LOW);
+                        delay(100);
+                    }
+                    break;
+                case 5:
+                    beakServo.write(BEAK_OPEN);
+                    delay(300);
+                    beakServo.write(BEAK_CLOSED);
+                    delay(300);
+                    beakServo.write(BEAK_OPEN);
+                    delay(300);
+                    beakServo.write(BEAK_MIDDLE);
+                    delay(300);
+                    beakServo.write(BEAK_OPEN);
+                    delay(300);
+                    beakServo.write(BEAK_CLOSED);
+                    delay(300);
+                    break;
+                    
+                default:
+                    break;
+            }
+            
+            step++;
+            if(step > 5) step = 0;
+            
+            break;
+        case 4: // green hat
+            
+            switch (step) {
+                case 0:
+                    for(int i=0; i<3; i++) {
+                        eyesWhite();
+                        delay(100);
+                        eyesGreen();
+                        delay(100);
+                    }
+                    break;
+                case 1:
+                    beakServo.write(BEAK_OPEN);
+                    for(int i=0; i<3; i++) {
+                        playTone(80, 100);
+                        playTone(60, 70);
+                        playTone(30, 80);
+                        delay(100);
+                    }
+                    beakServo.write(BEAK_CLOSED);
+                    delay(300);
+                    break;
+                case 2:
+                    for(int i=0; i<5; i++) {
+                        rotationServo.write(MIDDLE+60);
+                        delay(300);
+                        rotationServo.write(MIDDLE-60); 
+                        delay(300);
+                    }
+                    
+                    rotationServo.write(MIDDLE);
+                    break;
+                case 3:
+                    for(int i=0; i<5; i++) {
+                        rotationServo.write(MIDDLE+40);
+                        delay(100);
+                        rotationServo.write(MIDDLE-40); 
+                        delay(100);
+                    }
+                    
+                    rotationServo.write(MIDDLE);
+                    break;
+                case 4:
+                    for(int i=0; i<5; i++) {
+                        rotationServo.write(MIDDLE+60);
+                        delay(300);
+                        rotationServo.write(MIDDLE-60); 
+                        delay(300);
+                    }
+                    
+                    rotationServo.write(MIDDLE);
+                    break;
+                case 5:
+                    for(int i=0; i<5; i++) {
+                        rotationServo.write(MIDDLE+40);
+                        delay(100);
+                        rotationServo.write(MIDDLE-40); 
+                        delay(100);
+                    }
+                    
+                    rotationServo.write(MIDDLE);
+                    break;
+                    
+                default:
+                    break;
+            }
+            
+            step++;
+            if(step > 5) step = 0;
+            
+            break;
+        default:
+            break;
     }
     
-    delay(2000);
+}
+
+void checkNFC() {
     
-    //happy();
-    //macarena();
-    //beakTest();
+    uint32_t id;
+    // look for MiFare type cards
+    id = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A);
+    
+    if (id != 0) {
+        
+        uint8_t keys[]= {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+        if(nfc.authenticateBlock(1, id ,0x08,KEY_A,keys)) //authenticate block 0x08
+        {
+            //if authentication successful
+            uint8_t block[16];
+            //read memory block 0x08
+            if(nfc.readMemoryBlock(1,0x08,block)) {
+                //if read operation is successful
+                
+                if(block[0] == 1) {
+                    //Serial.println("top hat");
+                    hat = 1;
+                } else if(block[0] == 2) {
+                    //Serial.println("red maker hat");
+                    hat = 2;
+                } else if(block[0] == 3) {
+                    //Serial.println("purple robot hat");
+                    hat = 3;
+                } else if(block[0] == 4) {
+                    //Serial.println("green hat");
+                    hat = 4;
+                }
+                
+            }
+        }
+    } else {
+        //Serial.println("no hat");
+        hat = 0;
+        step = 0;
+    }
     
 }
+
+void photovoreCheck() {
+    
+    int ldrL_0 = analogRead(LDR_L);
+    int ldrR_0 = analogRead(LDR_R);
+    
+    //Serial << "L Difference: " << (ldrL_home-ldrL_0) << endl;
+    //Serial << "R Difference: " << (ldrR_home-ldrR_0) << endl;
+    
+    if(ldrL_0 < (ldrL_home-ldr_thresh) && ldrR_0 < (ldrR_home-ldr_thresh)) {
+        Serial << "L & R is covered!" << endl;
+        chase = true;
+        
+        photovoreTimeStarted = millis();
+        
+        Serial << "result = " << photovoreTimeStarted << "-" << millis() << "=" << millis()-photovoreTimeStarted << endl;
+        
+        while(millis()-photovoreTimeStarted <= photovorePlay) {
+            
+            checkNFC();
+            if(hat == 0) break;
+            
+            Serial << "chasing!";
+            chaseBehaviour(analogRead(LDR_L), analogRead(LDR_R));
+        }
+     
+        chase = false;
+        photovoreTimeStarted = 0;
+        goMiddle();
+        
+    }
+    
+}
+
+void eyesBlue() {
+    digitalWrite(RED, HIGH);
+    digitalWrite(GREEN, HIGH);
+    digitalWrite(BLUE, LOW);
+}
+
+void eyesRed() {
+    digitalWrite(RED, LOW);
+    digitalWrite(GREEN, HIGH);
+    digitalWrite(BLUE, HIGH);
+}
+
+void eyesPurple() {
+    digitalWrite(RED, LOW);
+    digitalWrite(GREEN, HIGH);
+    digitalWrite(BLUE, LOW);
+}
+
+void eyesGreen() {
+    digitalWrite(RED, HIGH);
+    digitalWrite(GREEN, LOW);
+    digitalWrite(BLUE, HIGH);
+}
+
+void eyesWhite() {
+    digitalWrite(RED, LOW);
+    digitalWrite(GREEN, LOW);
+    digitalWrite(BLUE, LOW);
+}
+
+void eyesOff() {
+    digitalWrite(RED, HIGH);
+    digitalWrite(GREEN, HIGH);
+    digitalWrite(BLUE, HIGH);
+}
+
 
 // ------------
 // D A N C E S
@@ -497,13 +905,39 @@ void partyBehaviour() {
     
 }
 
+void updateLights() {
+    // TODO.
+}
+
 
 // -------
 // L D R s
 // -------
 
 
+void evaluateLDRs() {
+    
+    int ldrL_total = 0;
+    int ldrR_total = 0;
+    
+    for(int i=0; i<10; i++) {
+        ldrL_total += analogRead(LDR_L);
+        ldrR_total += analogRead(LDR_R);
+        delay(100);
+    }
+    
+    Serial << "LDR Total- L: " << ldrL_total << " R: " << ldrR_total << endl;
+    
+    ldrL_home = (int)ldrL_total/10;
+    ldrR_home = (int)ldrR_total/10;
+    
+    Serial << "LDR Home- L: " << ldrL_home << " R: " << ldrR_home << endl;
+    
+}
+
 void chaseBehaviour(int ldrL, int ldrR) {
+    
+    int d = 5;
     
     if(chase) {
     
@@ -521,9 +955,9 @@ void chaseBehaviour(int ldrL, int ldrR) {
 
             if(current < 180) {
                 if(photovore) {
-                    rotationServo.write(current-1);
+                    rotationServo.write(current-d);
                 } else {
-                    rotationServo.write(current+1);
+                    rotationServo.write(current+d);
                 }
             } else {
                 wingsExcited();
@@ -533,9 +967,9 @@ void chaseBehaviour(int ldrL, int ldrR) {
 
             if(current > 0) {
                 if(photovore) {
-                    rotationServo.write(current+1);
+                    rotationServo.write(current+d);
                 } else {
-                    rotationServo.write(current-1);
+                    rotationServo.write(current-d);
                 }
             } else {
                 wingsExcited();
@@ -597,197 +1031,6 @@ void playTone(int tone, int duration) {
 	}
 	
 }
-
-
-// ---------------
-// L E D   F A D E
-// ---------------
-
-
-void rainbowFade() {
-    
-    int dim = 5; // usually 15
-    
-    // Main loop for the fading. All the LEDs start
-    // off at dim (15), and end at dim... they never
-    // go completely off since it is easier to make
-    // the colours fade in and out
-    // You can probably adjust the i+=1 for a faster 
-    // fading rate
-    for(fadeCount=15; fadeCount<=255; fadeCount+=1) { 
-        
-        // For fading the rainbow, it cycles from 
-        // red to blue then to white and repeat
-        if(fadingRainbow) {
-            
-            // Red: 0,1,5,6
-            if(fadeColour == 0 || fadeColour == 1 || fadeColour == 5 || fadeColour == 6) {
-                analogWrite(RED, fadeCount);
-            } else {
-                analogWrite(RED, dim);
-            }
-            
-            // Green: 1,2,3,6
-            if(fadeColour == 1 || fadeColour == 2 || fadeColour == 3 || fadeColour == 6) {
-                analogWrite(GREEN, fadeCount);
-            } else {
-                analogWrite(GREEN, dim);
-            }
-            
-            // Blue: 3,4,5,6
-            if(fadeColour == 3 || fadeColour == 4 || fadeColour == 5 || fadeColour == 6) {
-                analogWrite(BLUE, fadeCount);
-            } else {
-                analogWrite(BLUE, dim);
-            }
-            
-            // Or you can just do classic white
-        } else {
-            
-            analogWrite(RED, fadeCount);
-            analogWrite(GREEN, fadeCount);
-            analogWrite(BLUE, fadeCount);
-            
-        }
-        
-        // Here's the hardcoded part that does the
-        // specific delays for the specific times
-        if (fadeCount > 150) delay(4);
-        if ((fadeCount > 125) && (fadeCount < 151)) delay(5);
-        if ((fadeCount > 100) && (fadeCount < 126)) delay(7);
-        if ((fadeCount > 75) && (fadeCount < 101)) delay(10);
-        if ((fadeCount > 50) && (fadeCount < 76)) delay(14);
-        if ((fadeCount > 25) && (fadeCount < 51)) delay(18);
-        if ((fadeCount > 1) && (fadeCount < 26)) delay(19);
-    }
-    
-    for(fadeCount=255; fadeCount>=15; fadeCount-=1) {
-        
-        if(fadingRainbow) {
-            
-            // Red: 0,1,5,6
-            if(fadeColour == 0 || fadeColour == 1 || fadeColour == 5 || fadeColour == 6) {
-                analogWrite(RED, fadeCount);
-            } else {
-                analogWrite(RED, dim);
-            }
-            
-            // Green: 1,2,3,6
-            if(fadeColour == 1 || fadeColour == 2 || fadeColour == 3 || fadeColour == 6) {
-                analogWrite(GREEN, fadeCount);
-            } else {
-                analogWrite(GREEN, dim);
-            }
-            
-            // Blue: 3,4,5,6
-            if(fadeColour == 3 || fadeColour == 4 || fadeColour == 5 || fadeColour == 6) {
-                analogWrite(BLUE, fadeCount);
-            } else {
-                analogWrite(BLUE, dim);
-            }
-            
-        } else {
-            
-            analogWrite(RED, fadeCount);
-            analogWrite(GREEN, fadeCount);
-            analogWrite(BLUE, fadeCount);
-            
-        }
-        
-        if (fadeCount > 150) delay(4);
-        if ((fadeCount > 125) && (fadeCount < 151)) delay(5);
-        if ((fadeCount > 100) && (fadeCount < 126)) delay(7);
-        if ((fadeCount > 75) && (fadeCount < 101)) delay(10);
-        if ((fadeCount > 50) && (fadeCount < 76)) delay(14);
-        if ((fadeCount > 25) && (fadeCount < 51)) delay(18);
-        if ((fadeCount > 1) && (fadeCount < 26)) delay(19);
-    }
-    
-    fadeColour++;
-    if(fadeColour == 7) fadeColour=0;
-    
-    delay(970);
-    
-}
-
-
-void updateLights() {
-    
-    int dim = 5; // Usually 50
-    
-    ledR = int(random(5, 255));
-    ledG = int(random(5, 255));
-    ledB = int(random(5, 255));
-	
-	fade( ledR_0,    ledG_0,      ledB_0, // Start
-		  ledR,        ledG,        ledB,  // Finish
-          1);
-	
-    ledR_0 = ledR;
-    ledG_0 = ledG;
-    ledB_0 = ledB;
-    
-}
-
-
-void fade( int start_R,  int start_G,  int start_B, 
-		   int finish_R, int finish_G, int finish_B,
-		   int stepTime ) {
-    
-    int skipEvery_R = 256/abs(start_R-finish_R); 
-    int skipEvery_G = 256/abs(start_G-finish_G);
-    int skipEvery_B = 256/abs(start_B-finish_B);
-    
-    for(int i=0; i<256; i++) {
-        
-        if(start_R<finish_R) {
-            if(i<=finish_R) {
-                if(i%skipEvery_R == 0) {
-                    analogWrite(RED, i);
-                } 
-            }
-        } else if(start_R>finish_R) {
-            if(i>=(256-start_R)) {
-                if(i%skipEvery_R == 0) {
-                    analogWrite(RED, 256-i); 
-                }
-            } 
-        }
-        
-        if(start_G<finish_G) {
-            if(i<=finish_G) {
-                if(i%skipEvery_G == 0) {
-                    analogWrite(GREEN, i);
-                } 
-            }
-        } else if(start_G>finish_G) {
-            if(i>=(256-start_G)) {
-                if(i%skipEvery_G == 0) {
-                    analogWrite(GREEN, 256-i); 
-                }
-            } 
-        }
-        
-        if(start_B<finish_B) {
-            if(i<=finish_B) {
-                if(i%skipEvery_B == 0) {
-                    analogWrite(BLUE, i);
-                } 
-            }
-        } else if(start_B>finish_B) {
-            if(i>=(256-start_B)) {
-                if(i%skipEvery_B == 0) {
-                    analogWrite(BLUE, 256-i); 
-                }
-            } 
-        }
-                
-        delay(stepTime);
-        
-    }
-    
-}
-
 
 
 // ----------------------
@@ -984,3 +1227,32 @@ void ledTest() {
     
 }
 
+
+/*
+
+Copyright (c) 2011, RobotGrrl.com
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, 
+are permitted provided that the following conditions are met:
+
+Redistributions of source code must retain the above copyright notice, this list 
+of conditions and the following disclaimer.
+Redistributions in binary form must reproduce the above copyright notice, this 
+list of conditions and the following disclaimer in the documentation and/or 
+other materials provided with the distribution.
+Neither the name of the RobotGrrl.com nor the names of its contributors may be 
+used to endorse or promote products derived from this software without specific 
+prior written permission.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED 
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR 
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES 
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; 
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON 
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS 
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+*/
